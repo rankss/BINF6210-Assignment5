@@ -3,6 +3,7 @@ title: "Assignment5"
 output: pdf_document
 date: "2023-11-29"
 author: "Ben Yang"
+github: "https://github.com/rankss/BINF6210-Assignment5"
 ---
 
 ```{r setup, include=FALSE}
@@ -18,6 +19,10 @@ Protein structures can be classified into four general classes; all-alpha, which
 While protein structure is a major first step in annotating a protein sequence, few studies have tried to associate structure with function in a single pipeline. Current prediction methods either tackles the structure, such as PSI-PRED and AlphaFold, or predicts the function or gene ontology of the sequence, such as PfamScan or InterProScan. In a previous study, we have identified the plausibility of using 3-mer profile of a sequence to classify different types of RNA with a neural network classifier. In this study, we will profile the amino acid sequence and compare the results of different classifiers such as random forest, K-nearest neighbors, support vector machine, and neural network to predict the protein structure class.
 
 ## Methods
+
+### Software
+
+The main softwares used in this study will be freely available in R. Libraries such as randomForest, class, e1071, and keras contains all the necessary tools to create classification models for this study. Other supporting libraries such as dplyr and gtools are used for simplification of code and data manipulation. The four classifiers compared in this study are random forest (RF), k-nearest neighbor (KNN), support vector machine (SVM) and simple neural network (NN). These four classifiers work differently to classify, but at the core, they are all supervised classifiers. RF create trees of randomly selected features at each level, while KNN takes K nearest neighbors of data points based on euclidean distance, and counts the number of categories. These two classifiers are nonlinear, compared to SVM and NN. SVM plots each point in N-dimensional space where N is the number of features and then subsequently finding the hyperplane that divides the points based on classes. NN performs matrix operations at each node to produce a probability map. These classifiers are widely used in the classification space, and gives good coverage of linear vs. nonlinear classification.
 
 ### Datasets
 
@@ -141,8 +146,6 @@ kable(df %>% select(c(127, 126, 1:3)) %>% head(n = 5),
 rm(AA, threeMer.list, row, sequence, threeMerFrequency)
 ```
 
-## Classification
-
 ### Data Partitioning
 
 We partition the data into 80% training and 20% testing data. To eliminate randomness, all classifiers will use the same training and testing data for classification. After partitioning, we obtain 2019 training sequences, and 512 testing sequences.
@@ -158,6 +161,8 @@ test <- df[indices == 2, ] %>% select(-PDBid)
 # Cleaning
 rm(indices)
 ```
+
+## Results and Discussion
 
 ### Random Forest
 
@@ -284,14 +289,13 @@ kable(list(misclass.SVM, confusionMatrix.SVM),
       caption = "Misclass error rate and Confusion Matrix of Support Vector Machine Classifier (linear)")
 ```
 
-Support vector machine classifier performed poorly as well with a grand misclass error rate of 54%. A common trend observed between the above three classifiers is that they performed well on class c structures, which contains alternating alpha helices and beta sheets, and performed poorly on class d structures, which contains alpha helices and beta sheets of no particular pattern.
+Support vector machine classifier performed poorly as well with a grand misclass error rate of 54%. However, SVM also performed poorly in classifying class d structures like the previous classifiers, but surprisingly it also performed worse in classifying class c structures, which the previous two classifiers excelled on. SVM performed better than KNN, but worse than RF in classifying class a and b. This is surprising, but perhaps it is due to the distinct feature of class a and b are not apparent in the category string.
 
 ### Neural Network
 
 ```{r neural_network, include = TRUE}
 # Import required library for this block
 suppressMessages(library(keras))
-#suppressMessages(install_keras(quietly = T))
 
 # Function that convert to one-hot encoding matrix and then into data frame
 oneHot <- function(df) {
@@ -325,9 +329,7 @@ classifier.NN <- keras_model_sequential() %>%
 
 # Obtain and plot the history of training
 history <- fit(classifier.NN, train.x, train.y, epochs = 50, batch_size = 128, validation_split = 0.1, verbose = 0)
-plot(history)
-
-evaluate(classifier.NN, test.x, test.y, verbose = 0)
+plot(history, main = "Figure 3. Neural Network Learning Curves")
 
 # Confusion matrix on testing data
 result <- data.frame(round(predict(classifier.NN, test.x)))
@@ -346,12 +348,28 @@ kable(list(misclass.NN, confusionMatrix.NN),
       caption = "Misclass error rate and Confusion Matrix of Neural Network Classifier (125 X 512 X 2048 X 4)")
 ```
 
-## Discussion
+As with the previous classifiers, a simple neural network also produced similar results with total error rate near 50%. With increasing epochs, accuracy stagnates at 50% at around 30 epochs. Similarly, NN also struggled with class d structures, while also performing poorly in classifying class c structures like the SVM. A common trend observed between the classifiers is that they perform poorly on class d structures. This, in conjunction of the poor classification on class a and class b structures gives insight that 3-mer of the categorical strings do not provide sufficient distinction between features for classifier to distinguish. Unlike linear classifiers, nonlinear classifiers performed well on class c structures by a wide margin, this is evidence that there is a nonlinear feature in the 3-mer of categorical strings that can be used for distinction. Although the attempt at classifying protein structure class was unsuccessful, we were able to observe that class c structures have a distinct feature that can be classified. Furthermore, RF classifier determined "AAA" is of high importance, an amino acid triplet that is known to have high flexibility in a protein. This agrees with the notion that the alternation between alpha and beta structure requires flexible amino acids for creating small turns and loops.
+
+There are two major flaws in this study. One of which is the idea of a categorical string. Amino acids individually exists because of their function. Each amino acid cannot be easily replaced by another without causing minor or major structural changes. Thus the notion that amino acids can be categorized to predict structure is perhaps incorrect. Another problem is the samples. With 25PDB, each protein is dissimilar to each other, thus, we will produce dissimilar categorical strings. With limited samples, using higher k for k-mer would decrease the frequency of each k-mer appearing, while using lower k would result in not enough features. Perhaps with 10-fold the sample size, classifiers will have more confidence in their prediction.
+
+The next steps of research would involve obtaining more protein from perhaps a higher similarity database like 85PDB to evaluate the hypothesis of categorical strings. Furthermore, we can experiment with different k-mers to find other features that may be missed by 3-mers. However, with the current results, I do not believe further pursuing the hypothesis of categorical strings is a good idea. With more protein sequences, we may just use the k-mer of the protein sequence instead.
+
+## Reflection
+
+The most difficult part of the assignment was generating the idea. Completing the idea, although time consuming, did not take nearly as long as the generating the idea itself. I personally dislike doing a project on a theme that has been done, I like to explore at novelties, new potentials and possibilities, or ideas that may be overlooked by other researchers. My thesis involves machine learning, either classification or prediction, so this was a great opportunity to obtain hands-on experience in this field. Assignment 5 has been a very rushed assignment compared to the rest, timeline wise. This was due to the little downtime that we had between assignments, and the inclusion of assignment 4 that was layered on top. I do suggest future students to start this assignment earlier, at least earlier than me. I also encourage future students to explore beyond what was done, and include novelties in these assignments, it really makes this project oriented course like your own.
 
 ## **References**
 
-<https://doi.org/10.1186/s13059-019-1715-2>
+Chou, K.-C., & Zhang, C.-T. (1995). Prediction of protein structural classes. *Critical Reviews in Biochemistry and Molecular Biology*, *30*(4), 275--349. <https://doi.org/10.3109/10409239509083488>
 
-[10.3109/10409239509083488](https://doi.org/10.3109/10409239509083488)
+Dalpiaz, D. (2017, August 28). *R for statistical learning*. daviddalpiaz.github.io. <https://daviddalpiaz.github.io/r4sl/k-nearest-neighbors.html>
 
-<https://doi.org/10.1186/1471-2105-9-226>
+GeeksforGeeks. (2020a, June 5). *Random Forest approach in R programming*. GeeksforGeeks. <https://www.geeksforgeeks.org/random-forest-approach-in-r-programming/>
+
+GeeksforGeeks. (2020b, June 22). *K-nn classifier in R programming*. GeeksforGeeks. <https://www.geeksforgeeks.org/k-nn-classifier-in-r-programming/>
+
+GeeksforGeeks. (2023, June 12). *Classifying data using support vector machines(svms) in R*. GeeksforGeeks. <https://www.geeksforgeeks.org/classifying-data-using-support-vector-machinessvms-in-r/>
+
+Kurgan, L., Cios, K., & Chen, K. (2008). SCPRED: Accurate prediction of protein structural class for sequences of twilight-zone similarity with predicting sequences. *BMC Bioinformatics*, *9*(1). <https://doi.org/10.1186/1471-2105-9-226>
+
+Salzberg, S. L. (2019). Next-generation genome annotation: We still struggle to get it right. *Genome Biology*, *20*(1). <https://doi.org/10.1186/s13059-019-1715-2>
