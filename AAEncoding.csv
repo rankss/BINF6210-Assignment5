@@ -1,0 +1,21 @@
+class,name,letter,category
+aliphatic,glycine,G,A
+aliphatic,alanine,A,A
+aliphatic,valine,V,A
+aliphatic,leucine,L,A
+aliphatic,isoleucine,I,A
+aliphatic,proline,P,A
+aliphatic,methionine,M,A
+aromatic,phenylalanine,F,B
+aromatic,tyrosine,Y,B
+aromatic,tryptophan,W,B
+polar,serine,S,C
+polar,threonine,T,C
+polar,cysteine,C,C
+polar,asparagine,N,C
+polar,glutamine,Q,C
+negative,aspartic acid,D,D
+negative,glutamic acid,E,D
+positive,arginine,R,E
+positive,histidine,H,E
+positive,lysine,K,E

@@ -1,0 +1,357 @@
+---
+title: "Assignment5"
+output: pdf_document
+date: "2023-11-29"
+author: "Ben Yang"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+With the advancement of next generation sequencing, sequencing of macromolecules have become fast and inexpensive. While so, annotations of genes and proteins remain a struggling process (Salzberg, 2019). A fundamental problem currently is that novel sequences are discovered at a faster rate than the speed of annotation, and at the same time, automated annotation methods produce inaccurate information, and thus require human intervention. This ultimately results in an overflowing number of novel sequences awaiting annotation. This is even more apparent in protein sequences as proteins require structure level understanding to annotate its function.
+
+Protein structures can be classified into four general classes; all-alpha, which is composed of mostly alpha helices, with occasional isolated beta sheets; all-beta, which is composed of mostly beta sheets with small strands of alpha helices in the periphery; alpha+beta, which contains both alpha helices and beta sheets in no particular pattern; and alpha/beta, which is constructed with alternating alpha helices and beta sheets (Chou and Zhang, 1995). There can be a final structural class, which describes a protein with no particular unrecognizable secondary structure. These secondary structures are the result of individual amino acids in the polypeptide chain interacting non-covalently with each other. Amino acids can be categorized into four groups, polar, nonpolar, positive, and negative depending on the R group. The nonpolar group can be divided further into aliphatic, and aromatic, which is important in creating steric hindrances. These interactions work in unison to create functions such as binding, cleaving, transportation, etc.
+
+While protein structure is a major first step in annotating a protein sequence, few studies have tried to associate structure with function in a single pipeline. Current prediction methods either tackles the structure, such as PSI-PRED and AlphaFold, or predicts the function or gene ontology of the sequence, such as PfamScan or InterProScan. In a previous study, we have identified the plausibility of using 3-mer profile of a sequence to classify different types of RNA with a neural network classifier. In this study, we will profile the amino acid sequence and compare the results of different classifiers such as random forest, K-nearest neighbors, support vector machine, and neural network to predict the protein structure class.
+
+## Methods
+
+### Datasets
+
+Two datasets, 25PDB, and FC699, were used in this study. Both datasets were downloaded from Kurgan et al. (2008). 25PDB is a set of high resolution sequences from PDB with pairwise sequence identity less than 25%. There is a total of 1673 sequences in 25PDB, with roughly equal distribution of the four structure classes, which include 443 all-alpha sequences, 443 all-beta sequences, 346 alpha/beta sequences, and 441 alpha+beta sequences. This dataset is frequently used to benchmark structural prediction algorithms in literature. FC699 contains 699 sequences that share less than 40% pairwise identity with itself and less than 35% pairwise identity with 25PDB. This dataset is used as a testing data set by Kurgan et al. (2008), but we will use it as a training dataset. This data set contains 130 all-alpha sequences, 269 all-beta sequences, 377 alpha/beta sequences, and 82 alpha+beta sequences. In total, 573 all-alpha sequences, 712 all-beta sequences, 723 alpha/beta sequences, and 523 alpha+beta sequences. The mapping of structural classes are as follows, a = all-alpha, b = all-beta, c = alpha/beta, d = alpha + beta.
+
+```{r datasets}
+# Import required library for this block
+suppressMessages(library(dplyr))
+suppressMessages(library(knitr))
+
+# Read from CSV the protein sequences and combine them
+PDB <- read.csv("25PDB.csv") %>% 
+  select(c("PDBid", "sequence", "actual.structural.class"))
+FC <- read.csv("FC699.csv") %>% 
+  select(c("PDBid", "sequence", "actual.structural.class"))
+names(PDB)[names(PDB) == "actual.structural.class"] <- "class"
+names(FC)[names(FC) == "actual.structural.class"] <- "class"
+data <- rbind(PDB, FC)
+
+# Produce counts for each structural class
+PDB.count <- PDB %>% group_by(class) %>% count()
+FC.count <- FC %>% group_by(class) %>% count()
+data.count <- data %>% group_by(class) %>% count()
+
+# Create table
+kable(list(PDB.count, FC.count, data.count), 
+      caption = "Structural Class Count of 25PDB, FC699 and Total")
+
+# Cleaning
+rm(PDB.count, FC.count, data.count, FC, PDB)
+```
+
+### Profiling
+
+Profiling of the amino acid sequence is based on the category of individual amino acid, into one of the five groups. Nonpolar aliphatic, nonpolar aromatic, polar uncharged, positive, and negative. Category mapping is displayed in table 2.
+
+```{r AA_profiling}
+# Create table for amino acid categorization
+AA <- read.csv("AAEncoding.csv")
+kable(AA, caption = "Amino Acid Profile Categorization")
+
+# Separating the categories
+mapping = list(AA$letter[c(1:7)], 
+               AA$letter[c(8:10)], 
+               AA$letter[c(11:15)], 
+               AA$letter[c(16:17)], 
+               AA$letter[c(18:20)])
+
+# Given a sequence, return the corresponding category sequence
+categorySequence <- function(sequence){
+  # Split each sequence into individual characters
+  sequence.split <- strsplit(sequence, "")[[1]]
+  result <- "" # Category string to build upon
+  # For each amino acid return the corresponding category number
+  for (aminoAcid in sequence.split) {
+    for (i in 1:5) {
+      if (aminoAcid %in% mapping[[i]]) {
+        result <- paste(result, LETTERS[i], sep = "")
+      }
+    }
+  }
+  return(result)
+}
+
+# For each sequence, obtain the category sequence and store it in data frame
+for (row in 1:nrow(data)) {
+  sequence <- data$sequence[row]
+  data$category[row] <- categorySequence(sequence)
+}
+
+# Cleaning
+rm(sequence, row, mapping, categorySequence)
+```
+
+Example: sequence "FTLQEG" would be converted into category sequence "BCACDA". We then obtain the 3-mer frequency profile of the categorized sequence. 3-mers of the category sequence "BCACDA" is BCA, CAC, ACD, CDA each with a frequency of 0.25.
+
+```{r k-mer_frequency_profiling}
+# Import required library for this block
+suppressMessages(library(gtools))
+
+# Generate 3-mer data frame and convert to list of 3-mers
+df <- permutations(5, 3, v = unique(AA$category), repeats.allowed = T) %>%
+  as.data.frame()
+threeMer.list <- paste(df$V1, df$V2, df$V3, sep = "")
+# Generate empty data frame to insert data
+df <- data.frame(matrix(nrow = 0, ncol = length(threeMer.list)))
+colnames(df) <- threeMer.list
+
+# Given sequence, return and append the 3-mer frequency data frame
+threeMerFrequency <- function(sequence, row) {
+  # Set row to all 0's
+  df[row, ] <- 0
+  
+  # Sliding window to obtain the 3-mers
+  sequence.split <- strsplit(sequence, "")[[1]]
+  for (i in 1:(length(sequence.split) - 2)) {
+    window <- paste(sequence.split[i:(i+2)], collapse = "")
+    df[row, window] = df[row, window] + 1
+  }
+  # Divide all values of row by number of 3-mers
+  df[row, ] = df[row, ]/(length(sequence.split) - 2)
+  
+  return(df)
+}
+
+# For each category sequence, obtain the 3-mer frequency
+for (row in 1:nrow(data)) {
+  sequence <- data$category[row]
+  df <- threeMerFrequency(sequence, row)
+}
+
+# Adding name and class to frequency data frame
+df$class <- data$class
+df$PDBid <- data$PDBid
+
+# Print sample data frame
+kable(df %>% select(c(127, 126, 1:3)) %>% head(n = 5), 
+      caption = "Sample 3-mer Frequency Probability Data Frame")
+
+# Cleaning
+rm(AA, threeMer.list, row, sequence, threeMerFrequency)
+```
+
+## Classification
+
+### Data Partitioning
+
+We partition the data into 80% training and 20% testing data. To eliminate randomness, all classifiers will use the same training and testing data for classification. After partitioning, we obtain 2019 training sequences, and 512 testing sequences.
+
+```{r partition}
+set.seed(42) # Setting seed for reproducibility
+
+# Create a list of 80% 1's and 20% 2'. 1 = Training, 2 = Testing.
+indices <- sample(2, nrow(df), replace = T, prob = c(0.8, 0.2))
+train <- df[indices == 1, ] %>% select(-PDBid)
+test <- df[indices == 2, ] %>% select(-PDBid)
+
+# Cleaning
+rm(indices)
+```
+
+### Random Forest
+
+```{r random_forest, include = TRUE}
+# Import required library for this block
+suppressMessages(library(randomForest))
+
+# Constructing model
+train$class <- factor(train$class)
+classifier.RF <- randomForest(class~., data = train)
+predict.RF <- predict(classifier.RF, newdata = test[1:125])
+
+# Error of classifier
+test$RF <- predict.RF != test$class
+misclass.RF <- test %>% select(class, RF) %>% group_by(class) %>% 
+  summarise(misclass = mean(RF))
+misclass.RF[nrow(misclass.RF) + 1, ] <- list("total", 
+                                             mean(predict.RF != test$class))
+
+# Confusion matrix on testing data
+confusionMatrix.RF <- table(test[, 126], predict.RF)
+
+kable(list(misclass.RF, confusionMatrix.RF),
+      caption = "Misclass error rate and Confusion Matrix of Random Forest Classifier (ntree = 500)")
+
+errorPerN <- classifier.RF[["err.rate"]] %>% as.data.frame() %>% select(-OOB)
+
+# Plotting model
+plot(rownames(errorPerN), ylim = c(0, max(errorPerN)),
+     type = "n", cex = 1, pch = 20,
+     xlab = "n (Number of trees)", ylab = "Error rate",
+     main = "Figure 1. Relationship between number of trees and model accuracy")
+
+colors <- c("black", "grey", "blue", "green")
+for (column in seq_along(errorPerN)) {
+  lines(x = rownames(errorPerN), y = errorPerN[, column],
+        type = "l", cex = 1, pch = 20, col = colors[column])
+}
+
+legend("bottomleft", legend = c("a", "b", "c", "d"),
+       col = colors, title = "Class", cex = 0.70, lty = 1)
+
+# Importance of features
+importance.RF <- importance(classifier.RF) %>% as.data.frame()
+importance.RF$feature <- rownames(importance.RF)
+rownames(importance.RF) <- NULL
+importance.RF <- importance.RF[order(-importance.RF$MeanDecreaseGini), ]
+kable(importance.RF %>% select(feature, MeanDecreaseGini) %>% head(n = 10), 
+      caption = "Importance of features sorted by highest to lowest")
+```
+
+The classification by Random Forest classifier of 500 trees is not optimal. For classes a, b, and c, the classifier was able to predict with majority of values being accurate. The prediction of class d is by far the worst with error percent as high as over 80%. The average error of the classifier around 40%, that changes with randomness of the model. This is summarized in table 4. Table 5 shows the top 10 important features determined by the classifier. We observe that feature "AAA", a triplet of non-polar aliphatic amino acids has an importance of 42%. This may be due to the flexibility of that chain being able to accomodate multiple protein folds without steric restriction.
+
+### K-Nearest Neighbor
+
+```{r k-nearest_neighbor, include = TRUE}
+# Import required library for this block
+suppressMessages(library(class))
+
+# Scaling training and testing data sets
+train.scale <- scale(train[, 1:125])
+test.scale <- scale(test[, 1:125])
+
+# Determine the best K https://daviddalpiaz.github.io/r4sl/k-nearest-neighbors.html
+accPerK <- rep(x = 0, times = 50)
+for (i in 1:50) {
+  pred <- knn(train = train.scale, test = test.scale, cl = train$class, k = i)
+  accPerK[i] = mean(test$class == pred)
+}
+
+# plot accuracy vs choice of k
+plot(accPerK, type = "o", cex = 1, pch = 20,
+     xlab = "k (number of neighbors)", ylab = "Accuracy",
+     main = "Figure 2. Relationship between number of neighbors and model accuracy")
+# add lines indicating k with best accuracy
+abline(v = which(accPerK == max(accPerK)), lwd = 1.5)
+# add line for max accuracy seen
+abline(h = max(accPerK), col = "grey", lty = 2)
+
+# Model
+classifier.KNN <- knn(train = train.scale, 
+                      test = test.scale, 
+                      cl = train$class, 
+                      k = which(accPerK == max(accPerK)))
+
+# Error of classifier
+test$KNN <- classifier.KNN != test$class
+misclass.KNN <- test %>% select(class, KNN) %>% group_by(class) %>% 
+  summarise(misclass = mean(KNN))
+misclass.KNN[nrow(misclass.KNN) + 1, ] <- list("total", 
+                                               mean(classifier.KNN != test$class))
+
+# Confusion matrix on testing data
+confusionMatrix.KNN <- table(test[, 126], classifier.KNN)
+
+kable(list(misclass.KNN, confusionMatrix.KNN),
+      caption = "Misclass error rate and Confusion Matrix of K-Nearest Neighbor Classifier (k = 1)")
+```
+
+The classification of K-Nearest Neighbor classifier performed worse than Random Forest classifier, with an average error of 59%, which unfortunately means it classifies more incorrects than corrects. KNN performed the best on class c with error of 17%, this is likely due to the distinct feature of class c sequences which contains alternating alpha helices and beta sheets. We further observe that the accuracy of KNN decreases with increasing k, this means that k = 1 will be the best performing model.
+
+### Support Vector Machine
+
+```{r support_vector_machine}
+# Import required library for this block
+suppressMessages(library(e1071))
+
+classifier.SVM <- svm(class~., data = train, 
+                      type = "C-classification", kernel = "linear")
+predict.SVM <- predict(classifier.SVM, newdata = test[1:125])
+
+
+# Error of classifier
+test$SVM <- predict.SVM != test$class
+misclass.SVM <- test %>% select(class, SVM) %>% group_by(class) %>% 
+  summarise(misclass = mean(SVM))
+misclass.SVM[nrow(misclass.SVM) + 1, ] <- list("total", 
+                                               mean(predict.SVM != test$class))
+
+# Confusion matrix on testing data
+confusionMatrix.SVM <- table(test[, 126], predict.SVM)
+
+kable(list(misclass.SVM, confusionMatrix.SVM),
+      caption = "Misclass error rate and Confusion Matrix of Support Vector Machine Classifier (linear)")
+```
+
+Support vector machine classifier performed poorly as well with a grand misclass error rate of 54%. A common trend observed between the above three classifiers is that they performed well on class c structures, which contains alternating alpha helices and beta sheets, and performed poorly on class d structures, which contains alpha helices and beta sheets of no particular pattern.
+
+### Neural Network
+
+```{r neural_network, include = TRUE}
+# Import required library for this block
+suppressMessages(library(keras))
+#suppressMessages(install_keras(quietly = T))
+
+# Function that convert to one-hot encoding matrix and then into data frame
+oneHot <- function(df) {
+    df$a <- as.integer(df$class == "a")
+    df$b <- as.integer(df$class == "b")
+    df$c <- as.integer(df$class == "c")
+    df$d <- as.integer(df$class == "d")
+    return(df)
+}
+
+map <- c("a", "b", "c", "d")
+reverseOneHot <- function(x) {
+  index <- match(1, x)
+  return(map[index])
+} 
+
+train.OH <- oneHot(train)
+test.OH <- oneHot(test)
+
+train.x <- subset(train.OH, select = 1:125) %>% as.matrix()
+train.y <- subset(train.OH, select = c("a", "b", "c", "d")) %>% as.matrix()
+test.x <- subset(test.OH, select = 1:125) %>% as.matrix()
+test.y <- subset(test.OH, select = c("a", "b", "c", "d")) %>% as.matrix()
+
+classifier.NN <- keras_model_sequential() %>%
+  layer_dense(units = ncol(train.x), activation = "relu", input_shape = ncol(train.x)) %>%
+  layer_dense(units = 512, activation = "relu") %>%
+  layer_dense(units = 2048, activation = "relu") %>%
+  layer_dense(units = ncol(train.y), activation = "softmax") %>%
+  compile(loss = "categorical_crossentropy", optimizer = "adam", metrics = "accuracy")
+
+# Obtain and plot the history of training
+history <- fit(classifier.NN, train.x, train.y, epochs = 50, batch_size = 128, validation_split = 0.1, verbose = 0)
+plot(history)
+
+evaluate(classifier.NN, test.x, test.y, verbose = 0)
+
+# Confusion matrix on testing data
+result <- data.frame(round(predict(classifier.NN, test.x)))
+test$predict <- apply(result, 1, reverseOneHot)
+confusionMatrix.NN <- table(test[, c("class", "predict")])
+
+# Error of classifier
+test$NN <- test$predict != test$class
+misclass.NN <- test %>% select(class, NN) %>% group_by(class) %>% 
+  summarise(misclass = mean(NN, na.rm = T))
+misclass.NN[nrow(misclass.NN) + 1, ] <- list("total", 
+                                               mean(test$predict != test$class, 
+                                                    na.rm = T))
+
+kable(list(misclass.NN, confusionMatrix.NN), 
+      caption = "Misclass error rate and Confusion Matrix of Neural Network Classifier (125 X 512 X 2048 X 4)")
+```
+
+## Discussion
+
+## **References**
+
+<https://doi.org/10.1186/s13059-019-1715-2>
+
+[10.3109/10409239509083488](https://doi.org/10.3109/10409239509083488)
+
+<https://doi.org/10.1186/1471-2105-9-226>
